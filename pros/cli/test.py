@@ -4,11 +4,11 @@ from pros.cli.common import resolve_v5_port
 from pros.jinx import JinxApplication
 from pros.serial.devices.vex import V5UserDevice
 from pros.serial.ports import DirectPort
-from .click_classes import *
-from .common import default_options
+
+from .common import default_options, pros_root
 
 
-@click.group(cls=PROSGroup)
+@pros_root
 def test_cli():
     pass
 

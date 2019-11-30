@@ -1,35 +1,50 @@
 import logging
+import os.path
+
+import pros.common.sentry
 
 import click
+import sys
 
-import pros.cli.build
-import pros.cli.conductor
-import pros.cli.conductor_utils
-import pros.cli.jinx
-import pros.cli.terminal
-import pros.cli.test
-import pros.cli.upload
-import pros.cli.v5_utils
 import pros.common.ui as ui
+import pros.common.ui.log
 from pros.cli.click_classes import *
-from pros.cli.common import default_options
+from pros.cli.common import default_options, root_commands
 from pros.common.utils import get_version, logger
+
+root_sources = [
+    'build',
+    'conductor',
+    'conductor_utils',
+    'terminal',
+    'jinx',
+    'upload',
+    'v5_utils',
+    'misc_commands',  # misc_commands must be after upload so that "pros u" is an alias for upload, not upgrade
+    'interactive',
+    'user_script'
+]
+
+if getattr(sys, 'frozen', False):
+    exe_file = sys.executable
+else:
+    exe_file = __file__
+
+if os.path.exists(os.path.join(os.path.dirname(exe_file), os.pardir, os.pardir, '.git')):
+    root_sources.append('test')
+
+for root_source in root_sources:
+    __import__(f'pros.cli.{root_source}')
 
 
 def main():
     try:
         ctx_obj = {}
-        pros_logger = logging.getLogger(pros.__name__)
-        pros_logger.propagate = False
-        click_handler = ui.PROSLogHandler(ctx_obj=ctx_obj)
-        # click_handler = logging.StreamHandler()
-        click_handler.setLevel(logging.WARNING)
+        click_handler = pros.common.ui.log.PROSLogHandler(ctx_obj=ctx_obj)
         ctx_obj['click_handler'] = click_handler
-        formatter = ui.PROSLogFormatter('%(levelname)s - %(name)s:%(funcName)s - %(message)s', ctx_obj)
+        formatter = pros.common.ui.log.PROSLogFormatter('%(levelname)s - %(name)s:%(funcName)s - %(message)s', ctx_obj)
         click_handler.setFormatter(formatter)
-        pros_logger.addHandler(click_handler)
-        pros_logger.setLevel(logging.WARNING)
-
+        logging.basicConfig(level=logging.WARNING, handlers=[click_handler])
         cli.main(prog_name='pros', obj=ctx_obj)
     except KeyboardInterrupt:
         click.echo('Aborted!')
@@ -42,26 +57,20 @@ def version(ctx: click.Context, param, value):
         return
     ctx.ensure_object(dict)
     if ctx.obj.get('machine_output', False):
-        click.echo(get_version())
+        ui.echo(get_version())
     else:
-        click.echo('pros, version {}'.format(get_version()))
+        ui.echo('pros, version {}'.format(get_version()))
     ctx.exit(0)
 
 
 @click.command('pros',
                cls=PROSCommandCollection,
-               sources=[pros.cli.build.build_cli,
-                        pros.cli.terminal.terminal_cli,
-                        pros.cli.upload.upload_cli,
-                        pros.cli.v5_utils.v5_utils_cli,
-                        pros.cli.conductor.conductor_cli,
-                        pros.cli.jinx.jinx_cli,
-                        pros.cli.test.test_cli])
+               sources=root_commands)
 @default_options
 @click.option('--version', help='Displays version and exits', is_flag=True, expose_value=False, is_eager=True,
               callback=version)
 def cli():
-    pass
+    pros.common.sentry.register()
 
 
 if __name__ == '__main__':

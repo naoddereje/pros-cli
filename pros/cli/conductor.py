@@ -1,13 +1,12 @@
 import os.path
 
-import pros.common as p
 import pros.common.ui as ui
 import pros.conductor as c
 from pros.cli.common import *
 from pros.conductor.templates import ExternalTemplate
 
 
-@click.group(cls=PROSGroup)
+@pros_root
 def conductor_cli():
     pass
 
@@ -19,7 +18,7 @@ def conductor():
     Conductor is PROS's project management facility. It is responsible for obtaining
     templates for which to create projects from.
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
     pass
 
@@ -39,7 +38,7 @@ def fetch(query: c.BaseTemplate):
 
     Additional parameters are available according to the depot.
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
 
     template_file = None
@@ -50,6 +49,7 @@ def fetch(query: c.BaseTemplate):
     elif query.metadata.get('origin', None) == 'local':
         if 'location' not in query.metadata:
             logger(__name__).error('--location option is required for the local depot. Specify --location <file>')
+            logger(__name__).debug(f'Query options provided: {query.metadata}')
             return -1
         template_file = query.metadata['location']
 
@@ -58,15 +58,20 @@ def fetch(query: c.BaseTemplate):
         template = ExternalTemplate(template_file)
         query.metadata['location'] = template_file
         depot = c.LocalDepot()
+        logger(__name__).debug(f'Template file found: {template_file}')
     else:
+        if template_file:
+            logger(__name__).debug(f'Template file exists but is not a valid template: {template_file}')
         template = c.Conductor().resolve_template(query, allow_offline=False)
-        logger(__name__).debug(template)
+        logger(__name__).debug(f'Template from resolved query: {template}')
         if template is None:
             logger(__name__).error(f'There are no templates matching {query}!')
             return -1
         depot = c.Conductor().get_depot(template.metadata['origin'])
+        logger(__name__).debug(f'Found depot: {depot}')
     # query.metadata contain all of the extra args that also go to the depot. There's no way for us to determine
     # whether the arguments are for the template or for the depot, so they share them
+    logger(__name__).debug(f'Additional depot and template args: {query.metadata}')
     c.Conductor().fetch_template(depot, template, **query.metadata)
 
 
@@ -81,6 +86,8 @@ def fetch(query: c.BaseTemplate):
               help="Force all system files to be inserted into the project")
 @click.option('--force-apply', 'force_apply', default=False, is_flag=True,
               help="Force apply the template, disregarding if the template is already installed.")
+@click.option('--remove-empty-dirs/--no-remove-empty-dirs', 'remove_empty_directories', is_flag=True, default=True,
+              help='Remove empty directories when removing files')
 @project_option()
 @template_query(required=True)
 @default_options
@@ -88,9 +95,9 @@ def apply(project: c.Project, query: c.BaseTemplate, **kwargs):
     """
     Upgrade or install a template to a PROS project
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
-    c.Conductor().apply_template(project, identifier=query, **kwargs)
+    return c.Conductor().apply_template(project, identifier=query, **kwargs)
 
 
 @conductor.command(aliases=['i', 'in'], context_settings={'ignore_unknown_options': True})
@@ -102,6 +109,8 @@ def apply(project: c.Project, query: c.BaseTemplate, **kwargs):
               help="Force all system files to be inserted into the project")
 @click.option('--force-apply', 'force_apply', default=False, is_flag=True,
               help="Force apply the template, disregarding if the template is already installed.")
+@click.option('--remove-empty-dirs/--no-remove-empty-dirs', 'remove_empty_directories', is_flag=True, default=True,
+              help='Remove empty directories when removing files')
 @project_option()
 @template_query(required=True)
 @default_options
@@ -110,12 +119,12 @@ def install(ctx: click.Context, **kwargs):
     """
     Install a library into a PROS project
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
-    ctx.invoke(apply, install_ok=True, **kwargs)
+    return ctx.invoke(apply, install_ok=True, **kwargs)
 
 
-@conductor.command(context_settings={'ignore_unknown_options': True})
+@conductor.command(context_settings={'ignore_unknown_options': True}, aliases=['u'])
 @click.option('--install/--no-install', 'install_ok', default=False)
 @click.option('--download/--no-download', 'download_ok', default=True)
 @click.option('--force-user', 'force_user', default=False, is_flag=True,
@@ -124,6 +133,8 @@ def install(ctx: click.Context, **kwargs):
               help="Force all system files to be inserted into the project")
 @click.option('--force-apply', 'force_apply', default=False, is_flag=True,
               help="Force apply the template, disregarding if the template is already installed.")
+@click.option('--remove-empty-dirs/--no-remove-empty-dirs', 'remove_empty_directories', is_flag=True, default=True,
+              help='Remove empty directories when removing files')
 @project_option()
 @template_query(required=False)
 @default_options
@@ -132,20 +143,39 @@ def upgrade(ctx: click.Context, project: c.Project, query: c.BaseTemplate, **kwa
     """
     Upgrade a PROS project or one of its libraries
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
     if not query.name:
         for template in project.templates.keys():
             click.secho(f'Upgrading {template}', color='yellow')
-            q = c.BaseTemplate.create_query(name=template)
+            q = c.BaseTemplate.create_query(name=template, target=project.target,
+                                            supported_kernels=project.templates['kernel'].version)
             ctx.invoke(apply, upgrade_ok=True, project=project, query=q, **kwargs)
     else:
         ctx.invoke(apply, project=project, query=query, upgrade_ok=True, **kwargs)
 
 
+@conductor.command('uninstall')
+@click.option('--remove-user', is_flag=True, default=False, help='Also remove user files')
+@click.option('--remove-empty-dirs/--no-remove-empty-dirs', 'remove_empty_directories', is_flag=True, default=True,
+              help='Remove empty directories when removing files')
+@project_option()
+@template_query()
+@default_options
+def uninstall_template(project: c.Project, query: c.BaseTemplate, remove_user: bool,
+                       remove_empty_directories: bool = False):
+    """
+    Uninstall a template from a PROS project
+
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
+    """
+    c.Conductor().remove_template(project, query, remove_user=remove_user,
+                                  remove_empty_directories=remove_empty_directories)
+
+
 @conductor.command('new-project', aliases=['new', 'create-project'])
 @click.argument('path', type=click.Path())
-@click.argument('platform', default='v5', type=click.Choice(['v5', 'cortex']))
+@click.argument('target', default=c.Conductor().default_target, type=click.Choice(['v5', 'cortex']))
 @click.argument('version', default='latest')
 @click.option('--force-user', 'force_user', default=False, is_flag=True,
               help='Replace all user files in a template')
@@ -153,28 +183,45 @@ def upgrade(ctx: click.Context, project: c.Project, query: c.BaseTemplate, **kwa
               help="Force all system files to be inserted into the project")
 @click.option('--force-refresh', is_flag=True, default=False, show_default=True,
               help='Force update all remote depots, ignoring automatic update checks')
+@click.option('--no-default-libs', 'no_default_libs', default=False, is_flag=True,
+              help='Do not install any default libraries after creating the project.')
+@click.option('--compile-after', is_flag=True, default=True, show_default=True,
+              help='Compile the project after creation')
+@click.option('--build-cache', is_flag=True, default=None, show_default=False,
+              help='Build compile commands cache after creation. Overrides --compile-after if both are specified.')
 @click.pass_context
 @default_options
-def new_project(ctx: click.Context, path: str, platform: str, version: str,
-                force_user: bool = False, force_system: bool = False, **kwargs):
+def new_project(ctx: click.Context, path: str, target: str, version: str,
+                force_user: bool = False, force_system: bool = False,
+                no_default_libs: bool = False, compile_after: bool = True, build_cache: bool = None, **kwargs):
     """
     Create a new PROS project
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
     if version.lower() == 'latest' or not version:
         version = '>0'
     if not force_system and c.Project.find_project(path) is not None:
-        pros.common.logger(__name__).error('A project already exists in this location! Delete it first')
-        return -1
+        logger(__name__).error('A project already exists in this location! Delete it first', extra={'sentry': False})
+        ctx.exit(-1)
     try:
-        project = c.Conductor().new_project(path, target=platform, version=version,
-                                            force_user=force_user, force_system=force_system, **kwargs)
+        _conductor = c.Conductor()
+        if target is None:
+            target = _conductor.default_target
+        project = _conductor.new_project(path, target=target, version=version,
+                                         force_user=force_user, force_system=force_system,
+                                         no_default_libs=no_default_libs, **kwargs)
         ui.echo('New PROS Project was created:', output_machine=False)
         ctx.invoke(info_project, project=project)
+
+        if compile_after or build_cache:
+            with ui.Notification():
+                ui.echo('Building project...')
+                ctx.exit(project.compile([], scan_build=build_cache))
+
     except Exception as e:
         pros.common.logger(__name__).exception(e)
-        return -1
+        ctx.exit(-1)
 
 
 @conductor.command('query-templates',
@@ -195,7 +242,7 @@ def query_templates(ctx, query: c.BaseTemplate, allow_offline: bool, allow_onlin
     """
     Query local and remote templates based on a spec
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
     if limit < 0:
         limit = 15
@@ -213,6 +260,7 @@ def query_templates(ctx, query: c.BaseTemplate, allow_offline: bool, allow_onlin
                 'name': template.name,
                 'version': template.version,
                 'location': template.origin,
+                'target': template.target,
                 'local': isinstance(template, c.LocalTemplate)
             }
     import semantic_version as semver
@@ -231,32 +279,10 @@ def info_project(project: c.Project, ls_upgrades):
     """
     Display information about a PROS project
 
-    Visit https://pros.cs.purdue.edu/v5/cli/conductor to learn more
+    Visit https://pros.cs.purdue.edu/v5/cli/conductor.html to learn more
     """
 
-    class ProjectReport(object):
-        def __init__(self, project: c.Project):
-            self.project = {
-                "target": project.target,
-                "location": os.path.abspath(project.location),
-                "name": project.name,
-                "templates": [{"name": t.name, "version": t.version, "origin": t.origin} for t in
-                              project.templates.values()]
-            }
-
-        def __str__(self):
-            import tabulate
-            s = f'PROS Project for {self.project["target"]} at: {self.project["location"]}' \
-                f' ({self.project["name"]})' if self.project["name"] else ''
-            s += '\n'
-            rows = [t.values() for t in self.project["templates"]]
-            headers = [h.capitalize() for h in self.project["templates"][0].keys()]
-            s += tabulate.tabulate(rows, headers=headers)
-            return s
-
-        def __getstate__(self):
-            return self.__dict__
-
+    from pros.conductor.project import ProjectReport
     report = ProjectReport(project)
     _conductor = c.Conductor()
     if ls_upgrades:

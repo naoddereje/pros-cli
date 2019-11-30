@@ -5,10 +5,9 @@ import queue
 from typing import *
 import time
 
-import click
 import websockets
 
-from pros.cli.common import resolve_v5_port
+from pros.cli.common import pros_root, resolve_v5_port
 from pros.jinx import JinxApplication
 from pros.serial.devices.vex import V5UserDevice
 from pros.serial.ports import DirectPort
@@ -19,7 +18,7 @@ def convert(b: str) -> str:
     return ''.join(reversed([b[i:i + 2] for i in range(0, len(b), 2)]))
 
 
-@click.group(cls=PROSGroup)
+@pros_root
 def jinx_cli():
     pass
 

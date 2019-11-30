@@ -1,13 +1,7 @@
-from .click_classes import *
 from .common import *
 
-from pros.common import *
 
-from pros.serial.ports import DirectPort
-from pros.serial.devices.vex import V5Device
-
-
-@click.group()
+@pros_root
 def v5_utils_cli():
     pass
 
@@ -25,21 +19,22 @@ def status(port: str):
     """
     Print system information for the V5
     """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
 
     ser = DirectPort(port)
     device = V5Device(ser)
-    status = device.get_system_status()
     if ismachineoutput():
-        print(status)
+        print(device.status)
     else:
         print('Connected to V5 on {}'.format(port))
-        print('System version:', '{}.{}.{}b{}'.format(*status['system_version']))
-        print('CPU0 F/W version:', '{}.{}.{}b{}'.format(*status['cpu0_version']))
-        print('CPU1 SDK version:', '{}.{}.{}b{}'.format(*status['cpu1_version']))
-        print('System ID: 0x{:x}'.format(status['system_id']))
+        print('System version:', device.status['system_version'])
+        print('CPU0 F/W version:', device.status['cpu0_version'])
+        print('CPU1 SDK version:', device.status['cpu1_version'])
+        print('System ID: 0x{:x}'.format(device.status['system_id']))
 
 
 @v5.command('ls-files')
@@ -51,6 +46,8 @@ def ls_files(port: str, vid: int, options: int):
     """
     List files on the flash filesystem
     """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
@@ -73,6 +70,8 @@ def read_file(file_name: str, port: str, vid: int, source: str):
     """
     Read file on the flash filesystem to stdout
     """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
@@ -96,6 +95,8 @@ def write_file(file, port: str, remote_file: str, **kwargs):
     """
     Write a file to the V5.
     """
+    from pros.serial.ports import DirectPort
+    from pros.serial.devices.vex import V5Device
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
@@ -116,6 +117,8 @@ def rm_file(file_name: str, port: str, vid: int, erase_all: bool):
     """
     Remove a file from the flash filesystem
     """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
@@ -123,6 +126,26 @@ def rm_file(file_name: str, port: str, vid: int, erase_all: bool):
     ser = DirectPort(port)
     device = V5Device(ser)
     device.erase_file(file_name, vid=vid, erase_all=erase_all)
+
+
+@v5.command('cat-metadata')
+@click.argument('file_name')
+@click.argument('port', required=False, default=None)
+@click.option('--vid', type=int, default=1, cls=PROSOption, hidden=True)
+@default_options
+def cat_metadata(file_name: str, port: str, vid: int):
+    """
+    Print metadata for a file
+    """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
+    port = resolve_v5_port(port, 'system')
+    if not port:
+        return -1
+
+    ser = DirectPort(port)
+    device = V5Device(ser)
+    print(device.get_file_metadata_by_name(file_name, vid=vid))
 
 
 @v5.command('rm-all')
@@ -133,6 +156,8 @@ def rm_all(port: str, vid: int):
     """
     Remove all user programs from the V5
     """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
     if not port:
         return -1
@@ -148,50 +173,92 @@ def rm_all(port: str, vid: int):
 
 
 @v5.command(short_help='Run a V5 Program')
-@click.argument('file', required=False, default=None)
+@click.argument('slot', required=False, default=1, type=click.IntRange(1, 8))
 @click.argument('port', required=False, default=None)
 @default_options
-def run(file: str, port: str):
+def run(slot: str, port: str):
     """
     Run a V5 program
-
-    If FILE is unspecified or is a directory, then attempts to find the correct filename based on the PROS project
     """
-    import pros.conductor as c
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
+    file = f'slot_{slot}.bin'
     import re
-    if not file or os.path.isdir(file):
-        path = c.Project.find_project(file)
-        if path:
-            file = f'{c.Project(path).name}.bin'
-    elif not re.match(r'[\w\.]{1,24}', file):
+    if not re.match(r'[\w\.]{1,24}', file):
         logger(__name__).error('file must be a valid V5 filename')
         return 1
     port = resolve_v5_port(port, 'system')
+    if not port:
+        return -1
     ser = DirectPort(port)
     device = V5Device(ser)
     device.execute_program_file(file, run=True)
 
 
 @v5.command(short_help='Stop a V5 Program')
-@click.argument('file', required=False, default=None)
 @click.argument('port', required=False, default=None)
 @default_options
-def stop(file: str, port: str):
+def stop(port: str):
     """
     Stops a V5 program
 
     If FILE is unspecified or is a directory, then attempts to find the correct filename based on the PROS project
     """
-    import pros.conductor as c
-    import re
-    if not file or os.path.isdir(file):
-        path = c.Project.find_project(file)
-        if path:
-            file = f'{c.Project(path).name}.bin'
-    elif not re.match(r'[\w\.]{1,24}', file):
-        logger(__name__).error('file must be a valid V5 filename')
-        return 1
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
     port = resolve_v5_port(port, 'system')
+    if not port:
+        return -1
     ser = DirectPort(port)
     device = V5Device(ser)
-    device.execute_program_file(file, run=False)
+    device.execute_program_file('', run=False)
+
+
+@v5.command(short_help='Take a screen capture of the display')
+@click.argument('file_name', required=False, default=None)
+@click.argument('port', required=False, default=None)
+@click.option('--force', is_flag=True, type=bool, default=False)
+@default_options
+def capture(file_name: str, port: str, force: bool = False):
+    """
+    Take a screen capture of the display
+    """
+    from pros.serial.devices.vex import V5Device
+    from pros.serial.ports import DirectPort
+    import png
+    import os
+
+    port = resolve_v5_port(port, 'system')
+    if not port:
+        return -1
+    ser = DirectPort(port)
+    device = V5Device(ser)
+    i_data, width, height = device.capture_screen()
+
+    if i_data is None:
+        print('Failed to capture screen from connected brain.')
+        return -1
+
+    # Sanity checking and default values for filenames
+    if file_name is None:
+        import time
+        time_s = time.strftime('%Y-%m-%d-%H%M%S')
+        file_name = f'{time_s}_{width}x{height}_pros_capture.png'
+    if file_name == '-':
+        # Send the data to stdout to allow for piping
+        print(i_data, end='')
+        return
+
+    if not file_name.endswith('.png'):
+        file_name += '.png'
+
+    if not force and os.path.exists(file_name):
+        print(f'{file_name} already exists. Refusing to overwrite!')
+        print('Re-run this command with the --force argument to overwrite existing files.')
+        return -1
+
+    with open(file_name, 'wb') as file_:
+        w = png.Writer(width, height)
+        w.write(file_, i_data)
+
+    print(f'Saved screen capture to {file_name}')

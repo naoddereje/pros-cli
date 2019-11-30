@@ -8,8 +8,8 @@ import colorama
 
 from pros.common.utils import logger
 from pros.serial import decode_bytes_to_str
-from pros.serial.ports import PortConnectionException
 from pros.serial.devices import StreamDevice
+from pros.serial.ports import PortConnectionException
 
 
 # This file is a modification of the miniterm implementation on pyserial
@@ -279,7 +279,8 @@ class Terminal(object):
         self._start_rx()
         self._start_tx()
 
-    def stop(self):
+    # noinspection PyUnusedLocal
+    def stop(self, *args):
         if not self.alive.is_set():
             logger(__name__).warning('Stopping terminal')
             self.alive.set()

@@ -1,12 +1,10 @@
 import pros.common.ui as ui
 import pros.conductor as c
-from pros.serial.ports import DirectPort
-from pros.serial.devices.vex import *
-from .click_classes import *
+
 from .common import *
 
 
-@click.group(cls=PROSGroup)
+@pros_root
 def upload_cli():
     pass
 
@@ -16,8 +14,10 @@ def upload_cli():
               help='Specify the target microcontroller. Overridden when a PROS project is specified.')
 @click.argument('path', type=click.Path(exists=True), default=None, required=False)
 @click.argument('port', type=str, default=None, required=False)
+@project_option(required=False)
 @click.option('--run-after/--no-run-after', 'run_after', default=True, help='Immediately run the uploaded program')
-@click.option('--name', type=str, default=None, required=False, help='Remote program name',
+@click.option('-q', '--quirk', type=int, default=0)
+@click.option('--name', 'remote_name', type=str, default=None, required=False, help='Remote program name',
               cls=PROSOption, group='V5 Options')
 @click.option('--slot', default=1, show_default=True, type=click.IntRange(min=1, max=8), help='Program slot on the GUI',
               cls=PROSOption, group='V5 Options')
@@ -27,8 +27,14 @@ def upload_cli():
               cls=PROSOption, group='V5 Options', hidden=True)
 @click.option('--ini-config', type=click.Path(exists=True), default=None, help='Specify a Program Configuration File',
               cls=PROSOption, group='V5 Options', hidden=True)
+@click.option('--run-screen/--execute', 'run_screen', default=True,
+              cls=PROSOption, group='V5 Options', help='Open "run program" screen after uploading, instead of executing'
+                                                       ' program. This option may help with controller connectivity '
+                                                       'reliability and prevent robots from running off tables.')
+@click.option('--compress-bin/--no-compress-bin', 'compress_bin', cls=PROSOption, group='V5 Options', default=True,
+              help='Compress the program binary before uploading.')
 @default_options
-def upload(path: str, port: str, **kwargs):
+def upload(path: Optional[str], project: Optional[c.Project], port: str, **kwargs):
     """
     Upload a binary to a microcontroller.
 
@@ -38,16 +44,17 @@ def upload(path: str, port: str, **kwargs):
     [PORT] may be any valid communication port file, such as COM1 or /dev/ttyACM0. If left blank, then a port is
     automatically detected based on the target (or as supplied by the PROS project)
     """
-    args = []
+    import pros.serial.devices.vex as vex
+    from pros.serial.ports import DirectPort
     if path is None or os.path.isdir(path):
-        project_path = c.Project.find_project(path or os.getcwd())
-        if project_path is None:
-            logger(__name__).error('Specify a file to upload or set the cwd inside a PROS project')
-            return -1
-        project = c.Project(project_path)
-        path = project.output
-        if project.target == 'v5' and not kwargs['name']:
-            kwargs['name'] = project.name
+        if project is None:
+            project_path = c.Project.find_project(path or os.getcwd())
+            if project_path is None:
+                raise click.UsageError('Specify a file to upload or set the cwd inside a PROS project')
+            project = c.Project(project_path)
+        path = os.path.join(project.location, project.output)
+        if project.target == 'v5' and not kwargs['remote_name']:
+            kwargs['remote_name'] = project.name
 
         # apply upload_options as a template
         options = dict(**project.upload_options)
@@ -57,61 +64,68 @@ def upload(path: str, port: str, **kwargs):
         kwargs['target'] = project.target  # enforce target because uploading to the wrong uC is VERY bad
         if 'program-version' in kwargs:
             kwargs['version'] = kwargs['program-version']
-        if 'name' not in kwargs:
-            kwargs['name'] = project.name
+        if 'remote_name' not in kwargs:
+            kwargs['remote_name'] = project.name
     if 'target' not in kwargs:
+        logger(__name__).debug(f'Target not specified. Arguments provided: {kwargs}')
         raise click.UsageError('Target not specified. specify a project (using the file argument) or target manually')
 
     if kwargs['target'] == 'v5':
         port = resolve_v5_port(port, 'system')
     elif kwargs['target'] == 'cortex':
         port = resolve_cortex_port(port)
+    else:
+        logger(__name__).debug(f"Invalid target provided: {kwargs['target']}")
+        logger(__name__).debug('Target should be one of ("v5" or "cortex").')
     if not port:
-        return -1
+        raise dont_send(click.UsageError('No port provided or located. Make sure to specify --target if needed.'))
 
     if kwargs['target'] == 'v5':
-        if kwargs['name'] is None:
-            kwargs['name'] = os.path.splitext(os.path.basename(path))[0]
-        args.append(kwargs.pop('name').replace('@', '_'))
+        if kwargs['remote_name'] is None:
+            kwargs['remote_name'] = os.path.splitext(os.path.basename(path))[0]
+        kwargs['remote_name'] = kwargs['remote_name'].replace('@', '_')
         kwargs['slot'] -= 1
+        if kwargs['run_after'] and kwargs['run_screen']:
+            kwargs['run_after'] = vex.V5Device.FTCompleteOptions.RUN_SCREEN
+        elif kwargs['run_after'] and not kwargs['run_screen']:
+            kwargs['run_after'] = vex.V5Device.FTCompleteOptions.RUN_IMMEDIATELY
+        else:
+            kwargs['run_after'] = vex.V5Device.FTCompleteOptions.DONT_RUN
+        kwargs.pop('run_screen')
     elif kwargs['target'] == 'cortex':
         pass
 
-    # print what was decided
-    ui.echo('Uploading {} to {} device on {}'.format(path, kwargs['target'], port), nl=False)
-    if kwargs['target'] == 'v5':
-        ui.echo(f' as {args[0]} to slot {kwargs["slot"] + 1}', nl=False)
-    ui.echo('')
-
     logger(__name__).debug('Arguments: {}'.format(str(kwargs)))
-    if not os.path.isfile(path) and path is not '-':
-        logger(__name__).error(
-            '{} is not a valid file! Make sure it exists (e.g. by building your project)'.format(path))
-        return -1
 
     # Do the actual uploading!
     try:
         ser = DirectPort(port)
         device = None
         if kwargs['target'] == 'v5':
-            device = V5Device(ser)
+            device = vex.V5Device(ser)
         elif kwargs['target'] == 'cortex':
-            device = CortexDevice(ser)
-        with click.open_file(path, mode='rb') as pf:
-            device.write_program(pf, *args, **kwargs)
+            device = vex.CortexDevice(ser).get_connected_device()
+        if project is not None:
+            device.upload_project(project, **kwargs)
+        else:
+            with click.open_file(path, mode='rb') as pf:
+                device.write_program(pf, **kwargs)
     except Exception as e:
         logger(__name__).exception(e, exc_info=True)
         exit(1)
-
-    ui.finalize('upload', f'Finished uploading {path} to {kwargs["target"]} on {port}')
 
 
 @upload_cli.command('lsusb', aliases=['ls-usb', 'ls-devices', 'lsdev', 'list-usb', 'list-devices'])
 @click.option('--target', type=click.Choice(['v5', 'cortex']), default=None, required=False)
 @default_options
 def ls_usb(target):
+    """
+    List plugged in VEX Devices
+    """
+    from pros.serial.devices.vex import find_v5_ports, find_cortex_ports
+
     class PortReport(object):
-        def __init__(self, header: str, ports: List[Any], machine_header: Optional[str]=None):
+        def __init__(self, header: str, ports: List[Any], machine_header: Optional[str] = None):
             self.header = header
             self.ports = [{'device': p.device, 'desc': p.description} for p in ports]
             self.machine_header = machine_header or header
@@ -144,8 +158,9 @@ def ls_usb(target):
 
 
 @upload_cli.command('upload-terminal', aliases=['ut'], hidden=True)
+@shadow_command(upload)
 @click.pass_context
-def make_upload_terminal(ctx):
+def make_upload_terminal(ctx, **upload_kwargs):
     from .terminal import terminal
-    ctx.forward(upload)
-    ctx.forward(terminal, request_banner=False)
+    ctx.invoke(upload, **upload_kwargs)
+    ctx.invoke(terminal, request_banner=False)

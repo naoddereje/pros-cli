@@ -8,6 +8,11 @@ class PROSFormatted(click.BaseCommand):
     """
     Common format functions used in the PROS derived classes. Derived classes mix and match which functions are needed
     """
+
+    def __init__(self, *args, hidden: bool = False, **kwargs):
+        super(PROSFormatted, self).__init__(*args, **kwargs)
+        self.hidden = hidden
+
     def format_commands(self, ctx, formatter):
         """Extra format methods for multi methods that adds all the commands
                 after the options.
@@ -32,7 +37,7 @@ class PROSFormatted(click.BaseCommand):
 
     def format_options(self, ctx, formatter):
         """Writes all the options into the formatter if they exist."""
-        opts = defaultdict(lambda: [])  # type: DefaultDict[str, List]
+        opts: DefaultDict[str, List] = defaultdict(lambda: [])
         for param in self.get_params(ctx):
             rv = param.get_help_record(ctx)
             if rv is not None:
@@ -54,9 +59,7 @@ class PROSFormatted(click.BaseCommand):
 
 
 class PROSCommand(PROSFormatted, click.Command):
-    def __init__(self, name, hidden: bool = False, **kwargs):
-        super().__init__(name, **kwargs)
-        self.hidden = hidden
+    pass
 
 
 class PROSMultiCommand(PROSFormatted, click.MultiCommand):
@@ -120,6 +123,10 @@ class PROSGroup(PROSFormatted, click.Group):
         if len(matches) == 1:
             return super(PROSGroup, self).get_command(ctx, matches.pop())
         return None
+
+
+class PROSRoot(PROSGroup):
+    pass
 
 
 class PROSCommandCollection(PROSFormatted, click.CommandCollection):

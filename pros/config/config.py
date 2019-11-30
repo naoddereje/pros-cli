@@ -1,8 +1,6 @@
 import json.decoder
-import os
 
 import jsonpickle
-
 from pros.common.utils import *
 
 
@@ -35,7 +33,15 @@ class Config(object):
                                 class_name = '{}.{}'.format(self.__class__.__module__, self.__class__.__qualname__)
                                 logger(__name__).debug(
                                     'Coercing {} to {}'.format(result['py/object'], class_name))
-                                self.__dict__.update(result['py/state'])
+                                old_object = result['py/object']
+                                try:
+                                    result['py/object'] = class_name
+                                    result = jsonpickle.unpickler.Unpickler().restore(result)
+                                except (json.decoder.JSONDecodeError, AttributeError) as e:
+                                    logger(__name__).debug(e)
+                                    logger(__name__).warning(f'Couldn\'t coerce {file} ({old_object}) to '
+                                                             f'{class_name}. Using rudimentary coercion')
+                                    self.__dict__.update(result['py/state'])
                             else:
                                 self.__dict__.update(result)
                         elif isinstance(result, object):
@@ -62,6 +68,9 @@ class Config(object):
                     else:
                         logger(__name__).debug('Failed to save {} ({})'.format(file, e))
 
+        from pros.common.sentry import add_context
+        add_context(self)
+
     def __getstate__(self):
         state = self.__dict__.copy()
         if '_Config__ignored' in self.__dict__:
@@ -83,11 +92,7 @@ class Config(object):
     def save(self, file: str = None) -> None:
         if file is None:
             file = self.save_file
-        if isdebug(__name__):
-            logger(__name__).debug('Pretty formatting {} file'.format(self.__class__.__name__))
-            jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
-        else:
-            jsonpickle.set_encoder_options('json')
+        jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
         if os.path.dirname(file):
             os.makedirs(os.path.dirname(file), exist_ok=True)
         with open(file, 'w') as f:

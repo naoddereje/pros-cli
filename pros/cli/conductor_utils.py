@@ -6,11 +6,11 @@ import zipfile
 from typing import *
 
 import click
-
 import pros.common.ui as ui
 import pros.conductor as c
 from pros.common.utils import logger
 from pros.conductor.templates import ExternalTemplate
+
 from .common import default_options, template_query
 from .conductor import conductor
 
@@ -164,4 +164,4 @@ def purge_template(query: c.BaseTemplate, force):
         click.confirm(f'Are you sure you want to remove multiple templates?', abort=True)
     for template in templates:
         if isinstance(template, c.LocalTemplate):
-            cond.remove_template(template)
+            cond.purge_template(template)

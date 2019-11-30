@@ -1,5 +1,5 @@
 websockets
-click
+click>=6,<7
 pyserial
 cachetools
 requests
@@ -9,5 +9,9 @@ semantic_version
 colorama
 pyzmq
 cobs
-scan-build
+scan-build==2.0.13
 msgpack
+rfc6266-parser
+sentry-sdk
+observable
+pypng
